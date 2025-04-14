@@ -5,6 +5,7 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import ast
 
+
 API = '7985853025:AAEOIJvCdF2zX_bQnxgvqZd5AmElV0VzD2E'
 # Подключение к базе данных
 conn = sqlite3.connect('profile.db', check_same_thread=False)
@@ -12,7 +13,7 @@ cursor = conn.cursor()
 global message
 # Создание таблиц, если они еще не существуют
 
-
+user_state = {}
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS profiles (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,36 +50,6 @@ tfidf_matrix = tfidf_transformer.fit_transform(count_matrix)
 
 # Вычисление косинусной схожести между настольными играми
 cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
-
-# Функционал для работы с пользователями и профилями
-
-def register_user(message, username, password):
-    user_id = message.from_user.id
-    cursor.execute('SELECT * FROM profiles WHERE username=?', (username,))
-    result = cursor.fetchone()
-
-    if result is not None:
-        bot.send_message(message.chat.id, "Пользователь с таким именем уже существует!")
-        return False
-
-    cursor.execute('INSERT INTO profiles (user_id, username, password) VALUES (?, ?,?)', (user_id,username, password))
-    conn.commit()
-
-    # Создаем профиль для нового пользователя
-
-    bot.send_message(message.chat.id, "Регистрация прошла успешно!")
-    return True
-
-def login_user(message,username, password):
-    cursor.execute('SELECT * FROM profiles WHERE username=? AND password=?', (username, password))
-    result = cursor.fetchone()
-    user_id=result[0]
-    if result is None:
-        bot.send_message(message.chat.id, "Неверное имя пользователя или пароль!")
-        return False
-
-    bot.send_message(message.chat.id, "Вы вошли в систему!")
-    return user_id
 
 def add_liked_game(message,user_id, game_name):
     cursor.execute('UPDATE profiles SET liked_games = liked_games || ? WHERE user_id = ?', ('|' + game_name, user_id))
@@ -158,7 +129,7 @@ def remove_disliked_game(message,user_id, game_name):
     else:
         bot.send_message(message.chat.id, f"Игра '{game_name}' не найдена в списке непонравившихся.")
 
-def get_recommendations_with_profile(message,game_names, user_id, n_recommendations=3):
+def get_recommendations_with_profile(message,game_names, user_id, n_recommendations=5):
     # Получаем данные профиля
     profile_data = get_profile_data(user_id)
     liked_games = profile_data[3].strip('|').split('|') if profile_data[3] else []
@@ -191,7 +162,7 @@ def get_recommendations_with_profile(message,game_names, user_id, n_recommendati
 # Исключаем сами введённые игры и игры из списка неприязни
     recommended_indices = [
         i for i, sim in enumerate(average_similarity)
-        if i not in indices and df_games.iloc[i]['name'] not in disliked_games
+        if i not in indices and df_games.iloc[i]['name'] not in disliked_games and i not in liked_indices
     ]
 
     # Сортируем оставшиеся игры по схожести
@@ -203,12 +174,13 @@ def get_recommendations_with_profile(message,game_names, user_id, n_recommendati
 
     # Получаем топ-3 похожих настольных игры
     top_indices = [i[0] for i in sorted_scores[:n_recommendations]]
-    recommendations = df_games.iloc[top_indices][['name']]
+    recommendations = df_games.iloc[top_indices][['name','boardgamecategory','boardgamemechanic']]
 
     bot.send_message(message.chat.id, f"Вот рекомендации для вас:\n{recommendations.to_string()}")
     return recommendations
 def description(game_name):
     try:
+
         return df_games.loc[df_games['name'] == game_name, 'description'].values[0]
     except:
         return 'Такой игры нет в нашем каталоге'
@@ -216,104 +188,121 @@ def description(game_name):
 API_TOKEN = '7985853025:AAEOIJvCdF2zX_bQnxgvqZd5AmElV0VzD2E'  # Замените на ваш токен
 bot = telebot.TeleBot(API_TOKEN)
 
+keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+button_1 = telebot.types.KeyboardButton('Добавить любимую')
+button_2 = telebot.types.KeyboardButton('Добавить нелюбимую')
+button_3 = telebot.types.KeyboardButton('Список любимых')
+button_4 = telebot.types.KeyboardButton('Список нелюбимых')
+button_5 = telebot.types.KeyboardButton('Убрать любимую')
+button_6 = telebot.types.KeyboardButton('Убрать нелюбимую')
+button_7 = telebot.types.KeyboardButton('Рекомендации')
+button_8 = telebot.types.KeyboardButton('Главное меню')
+button_9 = telebot.types.KeyboardButton('Описание')
+keyboard.row(button_1, button_2,button_3,button_4,button_5,button_6,button_7, button_8,button_9)
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привет! Я помогу вам найти интересные настольные игры. Начнем?")
+    bot.reply_to(message, "Привет! Я помогу вам найти интересные настольные игры. Начнем?", reply_markup=keyboard)
 
-@bot.message_handler(commands=['register'])
-def handle_register(message):
-    args = message.text.split(maxsplit=2)
-    if len(args) != 3:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /register <username> <password>")
-        return
-    username, password = args[1], args[2]
-    if register_user(message, username, password):
-        bot.reply_to(message, "Регистрация прошла успешно!")
-    else:
-        bot.reply_to(message, "Что-то пошло не так. Попробуйте снова.")
+@bot.message_handler(func=lambda message: message.text == 'Меню')
+def send_welcome(message):
 
-@bot.message_handler(commands=['login'])
-def handle_login(message):
-    args = message.text.split(maxsplit=2)
-    if len(args) != 3:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /login <username> <password>")
-        return
-    username, password = args[1], args[2]
-    res=login_user(message, username, password)
-    if res==False:
+    bot.reply_to(message, "Привет! Добро пожаловать в главное меню. Я помогу вам найти интересные настольные игры. Начнем?", reply_markup=keyboard)
 
-        bot.reply_to(message, "Неверное имя пользователя или пароль. Попробуйте снова.")
-    else:
-        bot.reply_to(message, "Вы успешно вошли в аккаунт.")
-@bot.message_handler(commands=['description'])
+@bot.message_handler(func=lambda message: message.text == 'Описание')
 def descr(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /description <game_name>")
-        return
-    game_name = args[1]
+    bot.reply_to(message, "Пожалуйста, введите название игры", reply_markup=keyboard)
 
-    bot.reply_to(message, description(game_name))
+    user_state[message.from_user.id] = 'desc'
 
 
-@bot.message_handler(commands=['add_like'])
+@bot.message_handler(func=lambda message: message.text == 'Добавить любимую')
 def handle_add_like(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /add_like <game_name>")
-        return
-    game_name = args[1]
-    user_id = message.from_user.id
-    add_liked_game(message, user_id, game_name)
 
-@bot.message_handler(commands=['add_dislike'])
+
+    bot.reply_to(message, "Пожалуйста, введите название игры",reply_markup=keyboard)
+
+    user_state[message.from_user.id] = 'awaiting_game_name'
+
+
+
+@bot.message_handler(func=lambda message: message.text == 'Добавить нелюбимую')
 def handle_add_dislike(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /add_dislike <game_name>")
-        return
-    game_name = args[1]
-    user_id = message.from_user.id
-    add_disliked_game(message,user_id, game_name)
+    bot.reply_to(message, "Пожалуйста, введите название игры",reply_markup=keyboard)
 
-@bot.message_handler(commands=['show_likes'])
+    user_state[message.from_user.id] = 'disawaiting_game_name'
+
+
+@bot.message_handler(func=lambda message: message.text == 'Список любимых')
 def handle_show_likes(message):
     user_id = message.from_user.id
     show_liked_games(message,user_id)
 
-@bot.message_handler(commands=['show_dislikes'])
+@bot.message_handler(func=lambda message: message.text == 'Список нелюбимых')
 def handle_show_dislikes(message):
     user_id = message.from_user.id
     show_disliked_games(message,user_id)
 
-@bot.message_handler(commands=['remove_like'])
+@bot.message_handler(func=lambda message: message.text == 'Убрать любимую')
 def handle_remove_like(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /remove_like <game_name>")
-        return
-    game_name = args[1]
-    user_id = message.from_user.id
-    remove_liked_game(message,user_id, game_name)
+    bot.reply_to(message, "Пожалуйста, введите название игры",reply_markup=keyboard)
 
-@bot.message_handler(commands=['remove_dislike'])
+    user_state[message.from_user.id] = 'del_love'
+
+
+@bot.message_handler(func=lambda message: message.text == 'Убрать нелюбимую')
 def handle_remove_dislike(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(message, "Неправильный формат команды. Используйте: /remove_dislike <game_name>")
-        return
-    game_name = args[1]
-    user_id = message.from_user.id
-    remove_disliked_game(message,user_id, game_name)
+    bot.reply_to(message, "Пожалуйста, введите название игры",reply_markup=keyboard)
 
-@bot.message_handler(commands=['get_recommendations'])
+    user_state[message.from_user.id] = 'del_unlove'
+
+@bot.message_handler(func=lambda message: message.text == 'Рекомендации')
 def handle_get_recommendations(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message,
-                     "Неправильный формат команды. Используйте: /get_recommendations <game_name1> <game_name2> ...")
-        return
-    game_names = args[1:]
+    bot.reply_to(message, "Пожалуйста, вводите названия игр(через запятую без пробелов)",reply_markup=keyboard)
+
+    user_state[message.from_user.id] = 'recs'
+
+
+
+#,reply_markup=keyboard
+@bot.message_handler(func=lambda message: message.content_type == 'text')
+def handle_user_input(message):
     user_id = message.from_user.id
-    get_recommendations_with_profile(message,game_names, user_id)
+
+    if user_id in user_state and user_state[user_id] == 'awaiting_game_name':
+
+        add_liked_game(message, user_id, message.text)
+
+        bot.send_message(user_id, f'Игра "{message.text}" была успешно добавлена в базу данных.', reply_markup=keyboard)
+
+        del user_state[user_id]
+    elif user_id in user_state and user_state[user_id] == 'disawaiting_game_name':
+
+        add_disliked_game(message, user_id, message.text)
+        bot.send_message(user_id, f'Игра "{message.text}" была успешно добавлена в базу данных.', reply_markup=keyboard)
+
+        del user_state[user_id]
+    elif user_id in user_state and user_state[user_id] == 'del_love':
+
+        remove_liked_game(message,user_id, message.text)
+        bot.send_message(user_id, f'Игра "{message.text}" была успешно удалена из базы данных.', reply_markup=keyboard)
+
+        del user_state[user_id]
+    elif user_id in user_state and user_state[user_id] == 'del_unlove':
+
+        remove_disliked_game(message,user_id, message.text)
+        bot.send_message(user_id, f'Игра "{message.text}" была успешно удалена из базы данных.', reply_markup=keyboard)
+
+        del user_state[user_id]
+    elif user_id in user_state and user_state[user_id] == 'recs':
+
+        game_names=message.text.split(',')
+        get_recommendations_with_profile(message,game_names, user_id)
+
+
+        del user_state[user_id]
+    elif user_id in user_state and user_state[user_id] == 'desc':
+        bot.send_message(user_id, description(message.text), reply_markup=keyboard)
+
+        del user_state[user_id]
 bot.infinity_polling()
