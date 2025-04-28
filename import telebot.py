@@ -203,6 +203,12 @@ keyboard.row[
     [button_3,button_4],
     [button_7, button_8,button_9]
             ]
+# Создаем ReplyKeyboardMarkup с нужными параметрами
+reply_markup = ReplyKeyboardMarkup(
+    keyboard,
+    resize_keyboard=True,   # Уменьшаем размер кнопок
+    one_time_keyboard=True  # Клавиатура исчезает после первого использования
+    )
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, "Привет! Я помогу вам найти интересные настольные игры. Начнем?", reply_markup=keyboard)
